@@ -4,6 +4,7 @@ import datetime
 import sys
 import warnings
 import time as mod_time
+import threading
 from redis._compat import (b, izip, imap, iteritems, iterkeys, itervalues,
                            basestring, long, nativestr, urlparse, bytes)
 from redis.connection import ConnectionPool, UnixDomainSocketConnection
@@ -425,7 +426,7 @@ class StrictRedis(object):
         subscribe to channels and listen for messages that get published to
         them.
         """
-        return PubSub(self.connection_pool, shard_hint)
+        return PubSub(self, self.connection_pool, shard_hint)
 
     #### COMMAND EXECUTION AND PROTOCOL PARSING ####
     def execute_command(self, *args, **options):
@@ -1659,13 +1660,15 @@ class PubSub(object):
     until a message arrives on one of the subscribed channels. That message
     will be returned and it's safe to start listening again.
     """
-    def __init__(self, connection_pool, shard_hint=None):
+    def __init__(self, redis, connection_pool, shard_hint=None):
+        self.redis = redis
         self.connection_pool = connection_pool
         self.shard_hint = shard_hint
         self.connection = None
         self.channels = set()
         self.patterns = set()
         self.subscription_count = 0
+        self.lock = Lock(self.redis, "RLock", timeout=100)
         self.subscribe_commands = set(
             ('subscribe', 'psubscribe', 'unsubscribe', 'punsubscribe')
         )
@@ -1793,6 +1796,36 @@ class PubSub(object):
                     'data': r[2]
                 }
             yield msg
+
+    def asynclisten(self, callback):
+        "Listen for messages on channels this client has been subscribed to, in an asynchronous manner"
+        def ltn(self, cb):
+            "Listen for messages on channels this client has been subscribed to"
+            while self.subscription_count or self.channels or self.patterns:
+                self.lock.acquire()
+                r = self.parse_response()
+                self.lock.release()
+                msg_type = nativestr(r[0])
+                if msg_type == 'pmessage':
+                    msg = {
+                        'type': msg_type,
+                        'pattern': nativestr(r[1]),
+                        'channel': nativestr(r[2]),
+                        'data': r[3]
+                    }
+                else:
+                    msg = {
+                        'type': msg_type,
+                        'pattern': None,
+                        'channel': nativestr(r[1]),
+                        'data': r[2]
+                    }
+                yield cb(msg)
+
+        threading.Thread(target=ltn, args=(callback)).start()
+
+
+
 
 
 class BasePipeline(object):

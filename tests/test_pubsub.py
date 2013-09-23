@@ -87,6 +87,98 @@ class TestPubSub(object):
             }
 
 
+    def test_channel_subscribe_async(self, r):
+        p = r.pubsub()
+
+        # subscribe doesn't return anything
+        assert p.subscribe('foo') is None
+
+        # send a message
+        assert r.publish('foo', 'hello foo') == 1
+
+
+
+        def callback1(message):
+        
+            assert message == \
+                {
+                    'type': 'subscribe',
+                    'pattern': None,
+                    'channel': 'foo',
+                    'data': 1
+                }
+
+            assert message == \
+                {
+                    'type': 'message',
+                    'pattern': None,
+                    'channel': 'foo',
+                    'data': b('hello foo')
+                }
+
+
+        p.asynclisten(callback1)
+
+
+        # unsubscribe
+        assert p.unsubscribe('foo') is None
+
+
+        def callback2(message):
+            assert message == \
+                {
+                    'type': 'unsubscribe',
+                    'pattern': None,
+                    'channel': 'foo',
+                    'data': 0
+                }
+
+        p.asynclisten(callback2)
+
+
+    def test_pattern_subscribe_async(self, r):
+        p = r.pubsub()
+
+        # psubscribe doesn't return anything
+        assert p.psubscribe('f*') is None
+
+        # send a message
+        assert r.publish('foo', 'hello foo') == 1
+
+        def callback1(message):
+            assert message == \
+                {
+                    'type': 'psubscribe',
+                    'pattern': None,
+                    'channel': 'f*',
+                    'data': 1
+                }
+
+            assert message == \
+                {
+                    'type': 'pmessage',
+                    'pattern': 'f*',
+                    'channel': 'foo',
+                    'data': b('hello foo')
+                }
+
+        p.asynclisten(callback1)
+
+        # unsubscribe
+        assert p.punsubscribe('f*') is None
+
+        def callback2(message):
+            assert message == \
+                {
+                    'type': 'punsubscribe',
+                    'pattern': None,
+                    'channel': 'f*',
+                    'data': 0
+                }
+
+        p.asynclisten(callback2)
+
+
 class TestPubSubRedisDown(object):
 
     def test_channel_subscribe(self, r):
